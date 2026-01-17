@@ -14,19 +14,19 @@ excel_file = "./merged_results/1hour_1.xlsx"
 df = pd.read_excel(excel_file, skiprows = 1)
 
 # 1. 数据预处理函数
-def prepare_data(df, time_steps=10, future_steps=1):
+def prepare_data(df1, time_steps=10, future_steps=1):
     """
     准备LSTM训练数据
 
     参数:
-    df: 包含时间序列的DataFrame，第一列是时间，2-5列是四维数据
+    df1: 包含时间序列的DataFrame，第一列是时间，2-5列是四维数据
     time_steps: 使用多少时间步长的历史数据
     future_steps: 预测未来多少步长
     """
     # 提取四维特征数据（假设列名为col1, col2, col3, col4）
     # 如果没有列名，使用数字索引
-    if df.shape[1] >= 5:
-        features = df.iloc[:, 1:5].values  # 2-5列是四维数据
+    if df1.shape[1] >= 5:
+        features = df1.iloc[:, 1:5].values  # 2-5列是四维数据
     else:
         raise ValueError("DataFrame需要至少5列：时间列 + 4个特征列")
 
@@ -102,18 +102,18 @@ def create_lstm_model(time_steps, n_features, future_steps=1):
 
 
 # 3. 完整训练和预测流程
-def train_and_predict(df, time_steps=20, future_steps=1, test_size=0.2):
+def train_and_predict(df1, time_steps=20, future_steps=1, test_size=0.2):
     """
     完整的训练和预测流程
 
     参数:
-    df: 输入数据
+    df1: 输入数据
     time_steps: 时间窗口大小
     future_steps: 预测未来步数
     test_size: 测试集比例
     """
     # 准备数据
-    X, y, scaler = prepare_data(df, time_steps, future_steps)
+    X, y, scaler = prepare_data(df1, time_steps, future_steps)
 
     # 划分训练集和测试集
     X_train, X_test, y_train, y_test = train_test_split(
@@ -233,8 +233,9 @@ def main():
     """
     主函数示例
     """
-    # 示例：创建模拟数据（如果你已经有df，可以跳过这一步）
-    # 假设df已经存在，格式为：时间列 + 4个特征列
+    # 示例：创建模拟数据（如果你已经有df1，可以跳过这一步）
+    # 假设df1已经存在，格式为：时间列 + 4个特征列
+    '''
     np.random.seed(42)
     n_samples = 1000
     time = pd.date_range(start='2023-01-01', periods=n_samples, freq='H')
@@ -247,14 +248,14 @@ def main():
     feature4 = np.sin(t * 2) * np.cos(t) + np.random.normal(0, 0.1, n_samples)
 
     # 创建DataFrame
-    df = pd.DataFrame({
+    df1 = pd.DataFrame({
         'time': time,
         'feature1': feature1,
         'feature2': feature2,
         'feature3': feature3,
         'feature4': feature4
     })
-
+    '''
     print("数据形状:", df.shape)
     print("\n数据预览:")
     print(df.head())
@@ -331,8 +332,8 @@ def load_model(model_path='lstm_model.h5', scaler_path='scaler.pkl'):
     # 训练模型
 model_single, model_multi, scaler_single, scaler_multi = main()
 
-    # 保存模型的示例
-    # save_model(model_single, scaler_single, 'lstm_single_step.h5', 'scaler_single.pkl')
-    # save_model(model_multi, scaler_multi, 'lstm_multi_step.h5', 'scaler_multi.pkl')
+    # 保存模型的示
+save_model(model_single, scaler_single, 'lstm_single_step.h5', 'scaler_single.pkl')
+save_model(model_multi, scaler_multi, 'lstm_multi_step.h5', 'scaler_multi.pkl')
 
 
