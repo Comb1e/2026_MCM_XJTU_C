@@ -54,7 +54,7 @@ else:
 
 
 # 数据预处理函数
-def prepare_data(data, sequence_length=10):
+def prepare_data(data, sequence_length = 10):
     """
     准备LSTM输入数据
     data: 输入数据，形状为 (n_samples, n_features)
@@ -104,7 +104,7 @@ print(f"标准化后特征形状: {features_scaled.shape}")
 print(f"标准化后前5行:\n{features_scaled[:5]}")
 
 # 设置序列长度
-sequence_length = 20  # 根据数据特性调整
+sequence_length = 168  # 根据数据特性调整
 
 # 检查数据长度是否足够
 if len(features_scaled) <= sequence_length:
@@ -148,7 +148,7 @@ test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
 # 定义LSTM模型
 class LSTMModel(nn.Module):
-    def __init__(self, input_size=4, hidden_size=64, num_layers=2, output_size=4):
+    def __init__(self, input_size=4, hidden_size=256, num_layers=4, output_size=4):
         super(LSTMModel, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -194,8 +194,8 @@ print(f"使用设备: {device}")
 
 model = LSTMModel(
     input_size=4,  # 4维输入数据
-    hidden_size=128,  # LSTM隐藏层大小
-    num_layers=2,  # LSTM层数
+    hidden_size=256,  # LSTM隐藏层大小
+    num_layers=4,  # LSTM层数
     output_size=4  # 预测4维输出
 ).to(device)
 
@@ -271,7 +271,7 @@ def train_model(model, train_loader, test_loader, epochs=50):
 
 # 开始训练
 print("\n开始训练模型...")
-epochs = 100
+epochs = 75
 train_losses, test_losses = train_model(model, train_loader, test_loader, epochs)
 
 # 绘制训练损失
@@ -323,6 +323,7 @@ def plot_predictions(model, X_test, y_test, scaler, time_test=None, feature_name
     plt.suptitle('LSTM预测结果对比', fontsize=16)
     plt.tight_layout()
     plt.show()
+    plt.savefig("1hour_lstm_predict.png")
 
     return predictions_original, y_test_original
 
@@ -475,3 +476,4 @@ for i in range(4):
 plt.suptitle('未来10个时间步的预测', fontsize=16)
 plt.tight_layout()
 plt.show()
+plt.savefig("1hour_sequence_predict.png")
