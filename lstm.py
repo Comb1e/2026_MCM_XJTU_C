@@ -323,7 +323,6 @@ def plot_predictions(model, X_test, y_test, scaler, time_test=None, feature_name
     plt.suptitle('LSTM预测结果对比', fontsize=16)
     plt.tight_layout()
     plt.show()
-    plt.savefig("1hour_lstm_predict.png")
 
     return predictions_original, y_test_original
 
@@ -476,4 +475,3 @@ for i in range(4):
 plt.suptitle('未来10个时间步的预测', fontsize=16)
 plt.tight_layout()
 plt.show()
-plt.savefig("1hour_sequence_predict.png")
