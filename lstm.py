@@ -1,339 +1,477 @@
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
+import torch.optim as optim
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Input
-from tensorflow.keras.callbacks import EarlyStopping
-import warnings
+import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader, TensorDataset
 
-warnings.filterwarnings('ignore')
+plt.rcParams['font.sans-serif'] = ['SimHei']
+plt.rcParams['axes.unicode_minus'] = False
 
-excel_file = "./merged_results/1hour_1.xlsx"
-df = pd.read_excel(excel_file, skiprows = 1)
+file = "./merged_results/1hour_1.xlsx"
+df = pd.read_excel(file)
 
-# 1. 数据预处理函数
-def prepare_data(df1, time_steps=10, future_steps=1):
+# 检查数据
+print("原始数据形状:", df.shape)
+print("前几行数据:")
+print(df.head())
+
+# 方法1: 如果数据中第一行确实是列名（字符串），需要跳过
+# 检查第一行是否包含字符串
+if df.iloc[0, 0] is not None and isinstance(df.iloc[0, 0], str):
+    print("检测到第一行可能是列名，跳过第一行...")
+    # 跳过第一行（列名行）
+    df_clean = df.iloc[1:].reset_index(drop=True)
+
+    # 确保数据类型正确
+    for i in range(df_clean.shape[1]):
+        df_clean.iloc[:, i] = pd.to_numeric(df_clean.iloc[:, i], errors='coerce')
+
+    # 删除可能存在的NaN值
+    df_clean = df_clean.dropna()
+
+    print("清洗后数据形状:", df_clean.shape)
+    print("清洗后数据前几行:")
+    print(df_clean.head())
+
+    # 将清洗后的数据赋值回df
+    df = df_clean
+
+# 方法2: 如果数据已经是纯数值，但第一行是第一维数据
+else:
+    print("数据已经是数值类型，直接使用...")
+
+    # 确保数据类型正确
+    for i in range(df.shape[1]):
+        df.iloc[:, i] = pd.to_numeric(df.iloc[:, i], errors='coerce')
+
+    # 删除可能存在的NaN值
+    df = df.dropna()
+    print("处理后数据形状:", df.shape)
+
+
+# 数据预处理函数
+def prepare_data(data, sequence_length=10):
     """
-    准备LSTM训练数据
-
-    参数:
-    df1: 包含时间序列的DataFrame，第一列是时间，2-5列是四维数据
-    time_steps: 使用多少时间步长的历史数据
-    future_steps: 预测未来多少步长
+    准备LSTM输入数据
+    data: 输入数据，形状为 (n_samples, n_features)
+    sequence_length: 序列长度
     """
-    # 提取四维特征数据（假设列名为col1, col2, col3, col4）
-    # 如果没有列名，使用数字索引
-    if df1.shape[1] >= 5:
-        features = df1.iloc[:, 1:5].values  # 2-5列是四维数据
-    else:
-        raise ValueError("DataFrame需要至少5列：时间列 + 4个特征列")
-
-    # 标准化数据（对于LSTM很重要）
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    features_scaled = scaler.fit_transform(features)
-
-    # 创建时间序列样本
     X, y = [], []
-
-    for i in range(len(features_scaled) - time_steps - future_steps + 1):
-        # 历史数据窗口
-        X.append(features_scaled[i:(i + time_steps), :])
-
-        # 未来数据（多步预测）
-        if future_steps == 1:
-            # 单步预测
-            y.append(features_scaled[i + time_steps, :])
-        else:
-            # 多步预测
-            y.append(features_scaled[(i + time_steps):(i + time_steps + future_steps), :])
-
-    X = np.array(X)
-    y = np.array(y)
-
-    # 如果是多步预测，需要重塑y的形状
-    if future_steps > 1:
-        y = y.reshape(y.shape[0], future_steps * 4)  # 4个特征
-
-    return X, y, scaler
+    for i in range(len(data) - sequence_length):
+        X.append(data[i:i + sequence_length])  # 序列数据
+        y.append(data[i + sequence_length])  # 下一个时间点的数据
+    return np.array(X), np.array(y)
 
 
-# 2. 创建LSTM模型
-def create_lstm_model(time_steps, n_features, future_steps=1):
-    """
-    创建LSTM模型
+# 提取特征数据
+# 第一维：时间数据（通常用于索引或可视化）
+time_data = df.iloc[:, 0].values.astype(float)
 
-    参数:
-    time_steps: 输入时间步长
-    n_features: 特征数量（这里是4）
-    future_steps: 预测步长
-    """
-    model = Sequential()
+# 第二到第五维：四维特征数据
+features = df.iloc[:, 1:5].values.astype(float)
 
-    # 第一层LSTM
-    model.add(Input(shape=(time_steps, n_features)))
-    model.add(LSTM(128, return_sequences=True))
-    model.add(Dropout(0.2))
+print(f"时间数据形状: {time_data.shape}")
+print(f"特征数据形状: {features.shape}")
+print(f"特征数据前5行:\n{features[:5]}")
+print(f"特征数据统计:\n均值: {features.mean(axis=0)}, 标准差: {features.std(axis=0)}")
 
-    # 第二层LSTM
-    model.add(LSTM(64, return_sequences=True))
-    model.add(Dropout(0.2))
+# 创建特征名称（用于可视化）
+feature_names = [f'Feature_{i + 1}' for i in range(features.shape[1])]
 
-    # 第三层LSTM
-    model.add(LSTM(32))
-    model.add(Dropout(0.2))
+# 可视化原始数据特征
+plt.figure(figsize=(15, 10))
+for i in range(4):
+    plt.subplot(2, 2, i + 1)
+    plt.plot(features[:200, i], label=feature_names[i])  # 只显示前200个点以便查看
+    plt.xlabel('Time Step')
+    plt.ylabel('Value')
+    plt.title(f'原始数据 - {feature_names[i]}')
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+plt.suptitle('四维时间序列数据可视化', fontsize=16)
+plt.tight_layout()
+plt.show()
 
-    # 输出层
-    if future_steps == 1:
-        # 单步预测：4个输出对应4个特征
-        model.add(Dense(4))
-    else:
-        # 多步预测：future_steps * 4个输出
-        model.add(Dense(future_steps * 4))
+# 标准化数据
+scaler = MinMaxScaler(feature_range=(0, 1))
+features_scaled = scaler.fit_transform(features)
 
-    model.compile(
-        optimizer='adam',
-        loss='mse',
-        metrics=['mae', 'mse']
-    )
+print(f"标准化后特征形状: {features_scaled.shape}")
+print(f"标准化后前5行:\n{features_scaled[:5]}")
 
-    return model
+# 设置序列长度
+sequence_length = 20  # 根据数据特性调整
 
+# 检查数据长度是否足够
+if len(features_scaled) <= sequence_length:
+    print(f"警告: 数据长度({len(features_scaled)})小于序列长度({sequence_length})")
+    # 自动调整序列长度
+    sequence_length = max(5, len(features_scaled) // 10)
+    print(f"自动调整序列长度为: {sequence_length}")
 
-# 3. 完整训练和预测流程
-def train_and_predict(df1, time_steps=20, future_steps=1, test_size=0.2):
-    """
-    完整的训练和预测流程
+# 准备数据集
+X, y = prepare_data(features_scaled, sequence_length)
 
-    参数:
-    df1: 输入数据
-    time_steps: 时间窗口大小
-    future_steps: 预测未来步数
-    test_size: 测试集比例
-    """
-    # 准备数据
-    X, y, scaler = prepare_data(df1, time_steps, future_steps)
+print(f"X (输入序列) 形状: {X.shape}")
+print(f"y (目标值) 形状: {y.shape}")
 
-    # 划分训练集和测试集
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, shuffle=False
-    )
+# 划分训练集和测试集
+# 对于时间序列，通常按时间顺序划分
+split_idx = int(len(X) * 0.8)
+X_train, X_test = X[:split_idx], X[split_idx:]
+y_train, y_test = y[:split_idx], y[split_idx:]
 
-    print(f"训练集形状: X_train={X_train.shape}, y_train={y_train.shape}")
-    print(f"测试集形状: X_test={X_test.shape}, y_test={y_test.shape}")
+print(f"训练集大小: {len(X_train)}")
+print(f"测试集大小: {len(X_test)}")
 
-    # 创建模型
-    model = create_lstm_model(
-        time_steps=time_steps,
-        n_features=4,
-        future_steps=future_steps
-    )
+# 转换为PyTorch张量
+X_train_tensor = torch.FloatTensor(X_train)
+y_train_tensor = torch.FloatTensor(y_train)
+X_test_tensor = torch.FloatTensor(X_test)
+y_test_tensor = torch.FloatTensor(y_test)
 
-    model.summary()
+print(f"训练张量形状: {X_train_tensor.shape}")
+print(f"测试张量形状: {X_test_tensor.shape}")
 
-    # 设置早停
-    early_stop = EarlyStopping(
-        monitor='val_loss',
-        patience=20,
-        restore_best_weights=True
-    )
+# 创建数据加载器
+train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
 
-    # 训练模型
-    history = model.fit(
-        X_train, y_train,
-        epochs=100,
-        batch_size=32,
-        validation_split=0.2,
-        callbacks=[early_stop],
-        verbose=1
-    )
-
-    # 评估模型
-    test_loss, test_mae, test_mse = model.evaluate(X_test, y_test, verbose=0)
-    print(f"测试集 MSE: {test_mse:.6f}")
-    print(f"测试集 MAE: {test_mae:.6f}")
-
-    return model, history, X_test, y_test, scaler
+batch_size = 32
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
 
-# 4. 预测函数
-def make_predictions(model, last_sequence, scaler, future_steps=1):
-    """
-    使用训练好的模型进行预测
+# 定义LSTM模型
+class LSTMModel(nn.Module):
+    def __init__(self, input_size=4, hidden_size=64, num_layers=2, output_size=4):
+        super(LSTMModel, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
 
-    参数:
-    model: 训练好的模型
-    last_sequence: 最后的时间窗口数据（shape: [1, time_steps, 4]）
-    scaler: 用于反标准化的scaler
-    future_steps: 预测步数
-    """
-    # 预测
-    predictions_scaled = model.predict(last_sequence)
+        # LSTM层
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=0.2 if num_layers > 1 else 0,
+            bidirectional=False  # 对于时间序列预测，单向LSTM通常足够
+        )
 
-    # 重塑预测结果
-    if future_steps == 1:
-        predictions_scaled = predictions_scaled.reshape(1, 1, 4)
-    else:
-        predictions_scaled = predictions_scaled.reshape(1, future_steps, 4)
+        # 全连接层
+        self.fc = nn.Sequential(
+            nn.Linear(hidden_size, 32),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(32, output_size)
+        )
+
+    def forward(self, x):
+        # 初始化隐藏状态
+        batch_size = x.size(0)
+        h0 = torch.zeros(self.num_layers, batch_size, self.hidden_size).to(x.device)
+        c0 = torch.zeros(self.num_layers, batch_size, self.hidden_size).to(x.device)
+
+        # LSTM前向传播
+        lstm_out, (hn, cn) = self.lstm(x, (h0, c0))
+
+        # 取最后一个时间步的输出
+        last_time_step = lstm_out[:, -1, :]
+
+        # 全连接层
+        output = self.fc(last_time_step)
+        return output
+
+
+# 初始化模型
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"使用设备: {device}")
+
+model = LSTMModel(
+    input_size=4,  # 4维输入数据
+    hidden_size=128,  # LSTM隐藏层大小
+    num_layers=2,  # LSTM层数
+    output_size=4  # 预测4维输出
+).to(device)
+
+# 打印模型结构
+print("模型结构:")
+print(model)
+print(f"模型参数量: {sum(p.numel() for p in model.parameters()):,}")
+
+# 定义损失函数和优化器
+criterion = nn.MSELoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+    optimizer, mode='min', patience=5, factor=0.5
+)
+
+
+# 训练模型
+def train_model(model, train_loader, test_loader, epochs=50):
+    train_losses = []
+    test_losses = []
+    best_test_loss = float('inf')
+
+    for epoch in range(epochs):
+        # 训练阶段
+        model.train()
+        train_loss = 0
+        for batch_x, batch_y in train_loader:
+            batch_x, batch_y = batch_x.to(device), batch_y.to(device)
+
+            optimizer.zero_grad()
+            outputs = model(batch_x)
+            loss = criterion(outputs, batch_y)
+            loss.backward()
+
+            # 梯度裁剪，防止梯度爆炸
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+            optimizer.step()
+            train_loss += loss.item()
+
+        avg_train_loss = train_loss / len(train_loader)
+
+        # 验证阶段
+        model.eval()
+        test_loss = 0
+        with torch.no_grad():
+            for batch_x, batch_y in test_loader:
+                batch_x, batch_y = batch_x.to(device), batch_y.to(device)
+                outputs = model(batch_x)
+                loss = criterion(outputs, batch_y)
+                test_loss += loss.item()
+
+        avg_test_loss = test_loss / len(test_loader)
+
+        # 学习率调度
+        scheduler.step(avg_test_loss)
+
+        # 保存最佳模型
+        if avg_test_loss < best_test_loss:
+            best_test_loss = avg_test_loss
+            torch.save(model.state_dict(), 'best_lstm_model.pth')
+
+        train_losses.append(avg_train_loss)
+        test_losses.append(avg_test_loss)
+
+        if (epoch + 1) % 5 == 0:
+            print(f'Epoch [{epoch + 1:03d}/{epochs}], '
+                  f'Train Loss: {avg_train_loss:.6f}, '
+                  f'Test Loss: {avg_test_loss:.6f}')
+
+    return train_losses, test_losses
+
+
+# 开始训练
+print("\n开始训练模型...")
+epochs = 100
+train_losses, test_losses = train_model(model, train_loader, test_loader, epochs)
+
+# 绘制训练损失
+plt.figure(figsize=(10, 5))
+plt.plot(train_losses, label='Train Loss', alpha=0.8)
+plt.plot(test_losses, label='Test Loss', alpha=0.8)
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.title('Training and Validation Loss')
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+
+# 预测并可视化结果
+def plot_predictions(model, X_test, y_test, scaler, time_test=None, feature_names=None):
+    if feature_names is None:
+        feature_names = [f'Feature_{i + 1}' for i in range(4)]
+
+    model.eval()
+    with torch.no_grad():
+        X_test_tensor = torch.FloatTensor(X_test).to(device)
+        predictions = model(X_test_tensor).cpu().numpy()
 
     # 反标准化
-    predictions = scaler.inverse_transform(
-        predictions_scaled.reshape(-1, 4)
-    ).reshape(future_steps, 4)
+    predictions_original = scaler.inverse_transform(predictions)
+    y_test_original = scaler.inverse_transform(y_test)
 
-    return predictions
+    # 创建时间索引
+    if time_test is None:
+        time_test = np.arange(len(y_test_original))
 
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    axes = axes.flatten()
 
-# 5. 可视化结果
-def plot_results(history, y_true, y_pred, features_names=None):
-    """
-    可视化训练过程和预测结果
+    for i in range(4):
+        ax = axes[i]
+        ax.plot(time_test[:100], y_test_original[:100, i],
+                label='Actual', alpha=0.7, linewidth=2, marker='o', markersize=3)
+        ax.plot(time_test[:100], predictions_original[:100, i],
+                label='Predicted', alpha=0.7, linestyle='--', linewidth=2, marker='s', markersize=3)
+        ax.set_xlabel('Time Step')
+        ax.set_ylabel('Value')
+        ax.set_title(f'{feature_names[i]} - Actual vs Predicted')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
 
-    参数:
-    history: 训练历史
-    y_true: 真实值
-    y_pred: 预测值
-    features_names: 特征名称列表
-    """
-    if features_names is None:
-        features_names = [f'Feature {i + 1}' for i in range(4)]
-
-    # 绘制训练历史
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-
-    # 训练损失
-    axes[0, 0].plot(history.history['loss'], label='Train Loss')
-    axes[0, 0].plot(history.history['val_loss'], label='Val Loss')
-    axes[0, 0].set_title('Model Loss')
-    axes[0, 0].set_ylabel('Loss')
-    axes[0, 0].set_xlabel('Epoch')
-    axes[0, 0].legend()
-    axes[0, 0].grid(True)
-
-    # 绘制每个特征的预测对比
-    for i, feature_name in enumerate(features_names):
-        row = (i + 1) // 3
-        col = (i + 1) % 3
-
-        axes[row, col].plot(y_true[:, i], label='True', alpha=0.7)
-        axes[row, col].plot(y_pred[:, i], label='Predicted', alpha=0.7)
-        axes[row, col].set_title(f'{feature_name} - True vs Predicted')
-        axes[row, col].set_ylabel('Value')
-        axes[row, col].set_xlabel('Time Step')
-        axes[row, col].legend()
-        axes[row, col].grid(True)
-
+    plt.suptitle('LSTM预测结果对比', fontsize=16)
     plt.tight_layout()
     plt.show()
 
+    return predictions_original, y_test_original
 
-# 6. 主函数 - 使用示例
-def main():
+
+# 获取测试集对应的时间
+time_test = time_data[split_idx + sequence_length:split_idx + sequence_length + len(y_test)]
+
+# 绘制预测结果
+print("\n绘制预测结果...")
+predictions, actuals = plot_predictions(
+    model, X_test, y_test, scaler,
+    time_test=time_test,
+    feature_names=feature_names
+)
+
+# 计算评估指标
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+
+def calculate_metrics(predictions, actuals, feature_names):
+    metrics = {}
+    print("\n模型性能评估:")
+    print("=" * 60)
+
+    for i in range(len(feature_names)):
+        mae = mean_absolute_error(actuals[:, i], predictions[:, i])
+        mse = mean_squared_error(actuals[:, i], predictions[:, i])
+        rmse = np.sqrt(mse)
+        r2 = r2_score(actuals[:, i], predictions[:, i])
+
+        # 计算相对误差
+        mean_actual = np.mean(np.abs(actuals[:, i]))
+        relative_error = (rmse / mean_actual * 100) if mean_actual != 0 else np.nan
+
+        metrics[feature_names[i]] = {
+            'MAE': mae,
+            'MSE': mse,
+            'RMSE': rmse,
+            'R2': r2,
+            'Relative_Error(%)': relative_error
+        }
+
+        print(f"\n{feature_names[i]}:")
+        print(f"  MAE: {mae:.6f}")
+        print(f"  MSE: {mse:.6f}")
+        print(f"  RMSE: {rmse:.6f}")
+        print(f"  R²: {r2:.4f}")
+        print(f"  相对误差: {relative_error:.2f}%")
+
+    # 总体指标
+    overall_mae = mean_absolute_error(actuals.flatten(), predictions.flatten())
+    overall_rmse = np.sqrt(mean_squared_error(actuals.flatten(), predictions.flatten()))
+
+    metrics['Overall'] = {
+        'MAE': overall_mae,
+        'RMSE': overall_rmse
+    }
+
+    print("\n" + "=" * 60)
+    print(f"总体指标:")
+    print(f"  MAE: {overall_mae:.6f}")
+    print(f"  RMSE: {overall_rmse:.6f}")
+
+    return metrics
+
+
+# 计算并显示评估指标
+metrics = calculate_metrics(predictions, actuals, feature_names)
+
+# 保存完整模型信息
+torch.save({
+    'model_state_dict': model.state_dict(),
+    'scaler': scaler,
+    'sequence_length': sequence_length,
+    'feature_names': feature_names,
+    'input_size': 4,
+    'hidden_size': 128,
+    'num_layers': 2,
+    'output_size': 4
+}, 'lstm_time_series_model_complete.pth')
+
+print("\n模型已保存为 'lstm_time_series_model_complete.pth'")
+
+
+# 预测未来的函数
+def predict_future(model, last_sequence, steps=10, scaler=None, sequence_length=20):
     """
-    主函数示例
+    预测未来多个时间步
+    last_sequence: 最后sequence_length个数据点
+    steps: 要预测的未来步数
     """
-    # 示例：创建模拟数据（如果你已经有df1，可以跳过这一步）
-    # 假设df1已经存在，格式为：时间列 + 4个特征列
-    '''
-    np.random.seed(42)
-    n_samples = 1000
-    time = pd.date_range(start='2023-01-01', periods=n_samples, freq='H')
+    model.eval()
+    predictions = []
 
-    # 创建四个相关的时间序列
-    t = np.linspace(0, 20, n_samples)
-    feature1 = np.sin(t) + np.random.normal(0, 0.1, n_samples)
-    feature2 = np.cos(t) + np.random.normal(0, 0.1, n_samples)
-    feature3 = t * 0.1 + np.random.normal(0, 0.1, n_samples)
-    feature4 = np.sin(t * 2) * np.cos(t) + np.random.normal(0, 0.1, n_samples)
+    # 初始输入序列
+    current_sequence = last_sequence.copy()
 
-    # 创建DataFrame
-    df1 = pd.DataFrame({
-        'time': time,
-        'feature1': feature1,
-        'feature2': feature2,
-        'feature3': feature3,
-        'feature4': feature4
-    })
-    '''
-    print("数据形状:", df.shape)
-    print("\n数据预览:")
-    print(df.head())
+    with torch.no_grad():
+        for step in range(steps):
+            # 准备当前序列
+            sequence_tensor = torch.FloatTensor(current_sequence).unsqueeze(0).to(device)
 
-    # 训练模型（单步预测）
-    print("\n开始训练单步预测模型...")
-    model, history, X_test, y_test, scaler = train_and_predict(
-        df,
-        time_steps=20,
-        future_steps=1,
-        test_size=0.2
-    )
+            # 预测下一个点
+            pred = model(sequence_tensor).cpu().numpy()
+            predictions.append(pred[0])
 
-    # 在测试集上进行预测
-    y_pred_scaled = model.predict(X_test)
+            # 更新序列：移除第一个点，加入预测值
+            current_sequence = np.vstack([current_sequence[1:], pred])
 
     # 反标准化
-    y_pred = scaler.inverse_transform(y_pred_scaled)
-    y_true = scaler.inverse_transform(y_test)
+    if scaler is not None:
+        predictions = scaler.inverse_transform(predictions)
 
-    # 可视化结果
-    features_names = ['Feature 1', 'Feature 2', 'Feature 3', 'Feature 4']
-    plot_results(history, y_true, y_pred, features_names)
-
-    # 多步预测示例
-    print("\n开始训练多步预测模型（预测未来3步）...")
-    model_multi, _, _, _, scaler_multi = train_and_predict(
-        df,
-        time_steps=20,
-        future_steps=3,
-        test_size=0.2
-    )
-
-    # 使用最后的时间窗口进行未来预测
-    last_sequence = X_test[-1:].reshape(1, 20, 4)  # 最后一个时间窗口
-    future_predictions = make_predictions(
-        model_multi,
-        last_sequence,
-        scaler_multi,
-        future_steps=3
-    )
-
-    print("\n未来3步预测结果:")
-    for i in range(3):
-        print(f"第{i + 1}步预测: {future_predictions[i]}")
-
-    return model, model_multi, scaler, scaler_multi
+    return np.array(predictions)
 
 
-# 7. 实用函数：保存和加载模型
-def save_model(model, scaler, model_path='lstm_model.h5', scaler_path='scaler.pkl'):
-    """保存模型和scaler"""
-    model.save(model_path)
-    import joblib
-    joblib.dump(scaler, scaler_path)
-    print(f"模型已保存到 {model_path}")
-    print(f"Scaler已保存到 {scaler_path}")
+# 示例：预测未来10个时间步
+print("\n预测未来10个时间步...")
+# 使用最后sequence_length个数据点作为起始
+last_sequence_scaled = features_scaled[-sequence_length:]
+future_predictions = predict_future(
+    model, last_sequence_scaled,
+    steps=10, scaler=scaler, sequence_length=sequence_length
+)
 
+print(f"未来10个时间步的预测值:")
+for i, pred in enumerate(future_predictions):
+    print(f"  时间步 {i + 1}: {pred}")
 
-def load_model(model_path='lstm_model.h5', scaler_path='scaler.pkl'):
-    """加载模型和scaler"""
-    from tensorflow.keras.models import load_model
-    import joblib
+# 可视化未来预测
+plt.figure(figsize=(15, 10))
+for i in range(4):
+    plt.subplot(2, 2, i + 1)
 
-    model = load_model(model_path)
-    scaler = joblib.load(scaler_path)
-    print(f"模型已从 {model_path} 加载")
-    print(f"Scaler已从 {scaler_path} 加载")
+    # 历史数据（最后50个点）
+    history = features[-50:, i]
+    plt.plot(range(len(history)), history, 'b-', label='Historical', alpha=0.7)
 
-    return model, scaler
+    # 未来预测
+    future = future_predictions[:, i]
+    plt.plot(range(len(history), len(history) + len(future)),
+             future, 'r--', label='Forecast', alpha=0.7, marker='o')
 
+    plt.xlabel('Time Step')
+    plt.ylabel('Value')
+    plt.title(f'{feature_names[i]} - Historical and Forecast')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
 
-# 运行主函数
-    # 训练模型
-model_single, model_multi, scaler_single, scaler_multi = main()
-
-    # 保存模型的示
-save_model(model_single, scaler_single, 'lstm_single_step.h5', 'scaler_single.pkl')
-save_model(model_multi, scaler_multi, 'lstm_multi_step.h5', 'scaler_multi.pkl')
-
-
+plt.suptitle('未来10个时间步的预测', fontsize=16)
+plt.tight_layout()
+plt.show()
