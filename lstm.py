@@ -14,6 +14,9 @@ plt.rcParams['axes.unicode_minus'] = False
 file = "./merged_results/1hour_1.xlsx"
 df = pd.read_excel(file)
 
+hidden_size_set = 256
+num_layers_set = 4
+
 # 检查数据
 print("原始数据形状:", df.shape)
 print("前几行数据:")
@@ -148,7 +151,7 @@ test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
 # 定义LSTM模型
 class LSTMModel(nn.Module):
-    def __init__(self, input_size=4, hidden_size=256, num_layers=4, output_size=4):
+    def __init__(self, input_size=4, hidden_size=hidden_size_set, num_layers=num_layers_set, output_size=4):
         super(LSTMModel, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -194,8 +197,8 @@ print(f"使用设备: {device}")
 
 model = LSTMModel(
     input_size=4,  # 4维输入数据
-    hidden_size=256,  # LSTM隐藏层大小
-    num_layers=4,  # LSTM层数
+    hidden_size=hidden_size_set,  # LSTM隐藏层大小
+    num_layers=num_layers_set,  # LSTM层数
     output_size=4  # 预测4维输出
 ).to(device)
 
@@ -399,8 +402,8 @@ torch.save({
     'sequence_length': sequence_length,
     'feature_names': feature_names,
     'input_size': 4,
-    'hidden_size': 128,
-    'num_layers': 2,
+    'hidden_size': hidden_size_set,
+    'num_layers': num_layers_set,
     'output_size': 4
 }, 'lstm_time_series_model_complete.pth')
 
